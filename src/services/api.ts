@@ -1,8 +1,8 @@
 import { JobCard, SlittingEntry } from "../types";
 
-export type SyncType = 'JOB_SUMMARY' | 'PRODUCTION_ENTRY';
+export type SyncType = 'JOB_SUMMARY' | 'PRODUCTION_ENTRY' | 'PRODUCTION_BATCH';
 
-export async function syncToGoogleSheets(data: Partial<JobCard> | Partial<SlittingEntry>, type: SyncType) {
+export async function syncToGoogleSheets(data: any, type: SyncType) {
   try {
     const response = await fetch('/api/sync-to-sheets', {
       method: 'POST',
@@ -12,12 +12,26 @@ export async function syncToGoogleSheets(data: Partial<JobCard> | Partial<Slitti
       body: JSON.stringify({ data, type }),
     });
 
+    const contentType = response.headers.get('content-type');
+    let errorMessage = '';
+    
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to sync to Google Sheets');
+      if (contentType && contentType.includes('application/json')) {
+        const errorData = await response.json();
+        errorMessage = errorData.error || `Sync failed with status: ${response.status}`;
+      } else {
+        const text = await response.text();
+        errorMessage = `Server Error: ${response.status}. The server returned an unexpected response format. This often happens if the backend is starting up or has crashed.`;
+        console.error('Non-JSON error response:', text);
+      }
+      throw new Error(errorMessage);
     }
 
-    return await response.json();
+    if (contentType && contentType.includes('application/json')) {
+      return await response.json();
+    }
+    
+    return { success: true };
   } catch (error) {
     console.error('Sync error:', error);
     throw error;

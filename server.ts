@@ -12,6 +12,11 @@ async function startServer() {
   app.use(express.json());
   app.use(cors());
 
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // API Route: Sync to Google Sheets
   app.post("/api/sync-to-sheets", async (req, res) => {
     const { data, type } = req.body;
@@ -83,42 +88,9 @@ async function startServer() {
       });
 
       const sheets = google.sheets({ version: "v4", auth });
-
-      // --- AUTO TAB CREATION START ---
-      try {
-        const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
-        const sheetNames = spreadsheet.data.sheets?.map(s => s.properties?.title) || [];
-        
-        const requiredTabs = [
-          { name: "Jobs", headers: ["Timestamp", "Type", "Date", "Job Number", "Customer", "Micron", "Qty", "Length", "Status"] },
-          { name: "Production", headers: ["Timestamp", "Job Number", "Size", "Gross", "Core", "Net", "Meter", "Operator"] }
-        ];
-
-        for (const tab of requiredTabs) {
-          if (!sheetNames.includes(tab.name)) {
-            await sheets.spreadsheets.batchUpdate({
-              spreadsheetId: sheetId,
-              requestBody: {
-                requests: [{
-                  addSheet: { properties: { title: tab.name } }
-                }]
-              }
-            });
-            await sheets.spreadsheets.values.update({
-              spreadsheetId: sheetId,
-              range: `${tab.name}!A1`,
-              valueInputOption: "RAW",
-              requestBody: { values: [tab.headers] }
-            });
-          }
-        }
-      } catch (err: any) {
-        console.warn("Auto-tab creation failed:", err.message);
-      }
-      // --- AUTO TAB CREATION END ---
       
       let row = [];
-      let range = "Sheet1!A:H";
+      let range = "";
 
       if (type === 'JOB_SUMMARY') {
         row = [
@@ -145,19 +117,75 @@ async function startServer() {
           data.operatorUid || 'Operator'
         ];
         range = "Production!A:H";
+      } else if (type === 'PRODUCTION_BATCH') {
+        const entries = Array.isArray(data) ? data : [data];
+        const rows = entries.map((entry: any) => [
+          new Date().toISOString(),
+          entry.jobNumber || entry.jobId,
+          entry.coilSize,
+          entry.grossWeight,
+          entry.coreWeight,
+          entry.netWeight,
+          entry.meter,
+          entry.operatorUid || 'Operator'
+        ]);
+        
+        await appendWithRetry("Production!A:H", rows, true);
+        console.log(`Sync Successful: ${type} (${entries.length} rows)`);
+        return res.json({ success: true, message: `Synchronized ${entries.length} entries to Google Sheets` });
       }
 
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: sheetId,
-        range: range,
-        valueInputOption: "RAW",
-        requestBody: {
-          values: [row],
-        },
-      });
+      // Helper function to append or create-then-append
+      async function appendWithRetry(targetRange: string, values: any[], isBatch = false) {
+        try {
+          await sheets.spreadsheets.values.append({
+            spreadsheetId: sheetId,
+            range: targetRange,
+            valueInputOption: "RAW",
+            requestBody: { values: isBatch ? values : [values] },
+          });
+        } catch (error: any) {
+          // If tab doesn't exist, create it and retry
+          if (error.message?.includes("range") || error.message?.includes("not find sheet")) {
+            console.log("Tab missing, creating it...");
+            const tabName = targetRange.split("!")[0];
+            const headers = (type === 'PRODUCTION_ENTRY' || type === 'PRODUCTION_BATCH')
+              ? ["Timestamp", "Job Number", "Size", "Gross", "Core", "Net", "Meter", "Operator"]
+              : ["Timestamp", "Type", "Date", "Job Number", "Customer", "Micron", "Qty", "Length", "Status"];
+            
+            await sheets.spreadsheets.batchUpdate({
+              spreadsheetId: sheetId,
+              requestBody: {
+                requests: [{ addSheet: { properties: { title: tabName } } }]
+              }
+            });
+            
+            // Add headers
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: sheetId,
+              range: `${tabName}!A1`,
+              valueInputOption: "RAW",
+              requestBody: { values: [headers] }
+            });
 
-      console.log(`Sync Successful: ${type}`);
-      res.json({ success: true, message: `Synchronized ${type} to Google Sheets` });
+            // Try append again
+            await sheets.spreadsheets.values.append({
+              spreadsheetId: sheetId,
+              range: targetRange,
+              valueInputOption: "RAW",
+              requestBody: { values: isBatch ? values : [values] },
+            });
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      if (type !== 'PRODUCTION_BATCH') {
+        await appendWithRetry(range, row);
+        console.log(`Sync Successful: ${type}`);
+        res.json({ success: true, message: `Synchronized ${type} to Google Sheets` });
+      }
     } catch (error: any) {
       console.error("Google Sheets Sync Error:", error.message);
       res.status(500).json({ error: error.message || "Failed to sync to Google Sheets" });

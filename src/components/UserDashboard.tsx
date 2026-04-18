@@ -256,17 +256,18 @@ export default function UserDashboard() {
       await Promise.all(savePromises);
       toast.success('Entries saved successfully');
       
-      // Sync to Google Sheets (Parallel)
+      // Sync to Google Sheets (Batch)
       const job = jobCards.find(j => j.id === jobId);
-      const syncPromises = jobEntries.map(entry => {
-        return syncToGoogleSheets({ 
-          ...entry, 
-          jobNumber: job?.jobNumber || 'Unknown' 
-        }, 'PRODUCTION_ENTRY').catch(err => console.warn('Sync failed for entry', entry.id, err));
-      });
+      const batchData = jobEntries.map(entry => ({
+        ...entry,
+        jobNumber: job?.jobNumber || 'Unknown'
+      }));
+
+      if (batchData.length > 0) {
+        await syncToGoogleSheets(batchData, 'PRODUCTION_BATCH');
+        toast.success('Synced to Google Sheets');
+      }
       
-      await Promise.all(syncPromises);
-      toast.success('Synced to Google Sheets');
       fetchEntries(jobId); // Refresh to get IDs
     } catch (error) {
       toast.error('Failed to save entries');
