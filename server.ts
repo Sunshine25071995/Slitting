@@ -27,12 +27,22 @@ async function startServer() {
     } = process.env;
 
     if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_SHEET_ID) {
+      console.error("Sync Error: Missing environment variables");
       return res.status(500).json({ 
         error: "Google Sheets configuration missing. Please check GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, and GOOGLE_SHEET_ID in environment variables." 
       });
     }
 
     try {
+      // 0. Extract Sheet ID if user pasted a URL
+      let sheetId = GOOGLE_SHEET_ID.trim();
+      if (sheetId.includes("docs.google.com/spreadsheets/d/")) {
+        const matches = sheetId.match(/\/d\/([a-zA-Z0-9-_]+)/);
+        if (matches && matches[1]) {
+          sheetId = matches[1];
+        }
+      }
+
       // 1. Detect if the user pasted the whole JSON instead of just the key
       let privateKeyCandidate = GOOGLE_PRIVATE_KEY.trim();
       if (privateKeyCandidate.startsWith("{")) {
@@ -42,7 +52,7 @@ async function startServer() {
             privateKeyCandidate = parsed.private_key;
           }
         } catch (e) {
-          // Not valid JSON, continue with original string
+          // Not valid JSON
         }
       }
 
@@ -52,18 +62,19 @@ async function startServer() {
       // 3. Fix newline handling
       privateKey = privateKey.replace(/\\n/g, "\n");
       
-      // 4. Validate key length (Private keys are usually > 1000 chars)
+      // 4. Validate key length
       if (privateKey.length < 100) {
         return res.status(400).json({ 
-          error: "The GOOGLE_PRIVATE_KEY provided is too short. Please ensure you copied the FULL 'private_key' value from your Google JSON file, not the 'private_key_id'." 
+          error: "The GOOGLE_PRIVATE_KEY is too short. Ensure you copied the FULL 'private_key' value from the JSON file." 
         });
       }
 
-      // 5. Ensure the key has proper PEM formatting headers
+      // 5. Ensure headers
       if (!privateKey.includes("-----BEGIN PRIVATE KEY-----")) {
-          // Ensure it's not already wrapped in something else
           privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey}\n-----END PRIVATE KEY-----`;
       }
+
+      console.log(`Syncing data for ${GOOGLE_SERVICE_ACCOUNT_EMAIL} to sheet ${sheetId}...`);
 
       const auth = new JWT({
         email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -75,7 +86,7 @@ async function startServer() {
 
       // --- AUTO TAB CREATION START ---
       try {
-        const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: GOOGLE_SHEET_ID });
+        const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
         const sheetNames = spreadsheet.data.sheets?.map(s => s.properties?.title) || [];
         
         const requiredTabs = [
@@ -85,27 +96,24 @@ async function startServer() {
 
         for (const tab of requiredTabs) {
           if (!sheetNames.includes(tab.name)) {
-            // Create the tab
             await sheets.spreadsheets.batchUpdate({
-              spreadsheetId: GOOGLE_SHEET_ID,
+              spreadsheetId: sheetId,
               requestBody: {
                 requests: [{
                   addSheet: { properties: { title: tab.name } }
                 }]
               }
             });
-            // Add headers
             await sheets.spreadsheets.values.update({
-              spreadsheetId: GOOGLE_SHEET_ID,
+              spreadsheetId: sheetId,
               range: `${tab.name}!A1`,
               valueInputOption: "RAW",
               requestBody: { values: [tab.headers] }
             });
-            console.log(`Created tab: ${tab.name}`);
           }
         }
-      } catch (err) {
-        console.warn("Auto-tab creation failed (ignoring):", err);
+      } catch (err: any) {
+        console.warn("Auto-tab creation failed:", err.message);
       }
       // --- AUTO TAB CREATION END ---
       
@@ -113,7 +121,6 @@ async function startServer() {
       let range = "Sheet1!A:H";
 
       if (type === 'JOB_SUMMARY') {
-        // Format: [Timestamp, Type, Date, Job Number, Customer, Micron, Qty, Length, Status]
         row = [
           new Date().toISOString(),
           "JOB_UPDATE",
@@ -125,9 +132,8 @@ async function startServer() {
           data.totalLength,
           data.status
         ];
-        range = "Jobs!A:I"; // Send to a 'Jobs' tab
+        range = "Jobs!A:I";
       } else if (type === 'PRODUCTION_ENTRY') {
-        // Format: [Timestamp, Job Number, Size, Gross, Core, Net, Meter, Operator]
         row = [
           new Date().toISOString(),
           data.jobNumber || data.jobId,
@@ -138,14 +144,11 @@ async function startServer() {
           data.meter,
           data.operatorUid || 'Operator'
         ];
-        range = "Production!A:H"; // Send to a 'Production' tab
-      } else {
-        return res.status(400).json({ error: "Invalid sync type" });
+        range = "Production!A:H";
       }
 
-      // We append to the sheet
       await sheets.spreadsheets.values.append({
-        spreadsheetId: GOOGLE_SHEET_ID,
+        spreadsheetId: sheetId,
         range: range,
         valueInputOption: "RAW",
         requestBody: {
@@ -153,9 +156,10 @@ async function startServer() {
         },
       });
 
+      console.log(`Sync Successful: ${type}`);
       res.json({ success: true, message: `Synchronized ${type} to Google Sheets` });
     } catch (error: any) {
-      console.error("Google Sheets Sync Error:", error);
+      console.error("Google Sheets Sync Error:", error.message);
       res.status(500).json({ error: error.message || "Failed to sync to Google Sheets" });
     }
   });
