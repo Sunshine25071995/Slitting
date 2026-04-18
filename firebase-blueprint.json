@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user with role-based access",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "operator"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "JobCard": {
+      "title": "Job Card",
+      "description": "Production job card created by admin",
+      "type": "object",
+      "properties": {
+        "jobNumber": { "type": "string", "description": "Unique job identifier" },
+        "date": { "type": "string", "format": "date-time" },
+        "sizes": { "type": "array", "items": { "type": "number" } },
+        "micron": { "type": "number" },
+        "oneRollMeter": { "type": "number" },
+        "eachCoilQuantity": { "type": "number" },
+        "eachCoilRolls": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "completed"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["jobNumber", "date", "sizes", "micron"]
+    },
+    "SlittingEntry": {
+      "title": "Slitting Entry",
+      "description": "Data entry for a specific coil in a job card",
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string" },
+        "coilSize": { "type": "number" },
+        "grossWeight": { "type": "number" },
+        "coreWeight": { "type": "number" },
+        "netWeight": { "type": "number" },
+        "meter": { "type": "number" },
+        "operatorUid": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["jobId", "coilSize", "grossWeight", "coreWeight"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles and roles"
+    },
+    "/jobCards/{jobId}": {
+      "schema": "JobCard",
+      "description": "Job card definitions"
+    },
+    "/jobCards/{jobId}/entries/{entryId}": {
+      "schema": "SlittingEntry",
+      "description": "Slitting data entries for a job card"
+    }
+  }
+}
