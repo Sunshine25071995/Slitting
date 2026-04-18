@@ -12,14 +12,19 @@ export interface JobCard {
   id?: string;
   jobNumber: string;
   date: string;
-  sizes: number[];
+  customerName: string;
   micron: number;
-  oneRollMeter: number;
-  eachCoilQuantity: number;
-  eachCoilRolls: number;
+  totalQuantity: number;
+  totalLength: number;
+  coilPlan: { size: number; rolls: number }[];
   status: 'pending' | 'in-progress' | 'completed';
   createdBy: string;
   createdAt: string;
+  // Legacy fields for compatibility
+  sizes: number[];
+  eachCoilRolls: number;
+  oneRollMeter: number;
+  eachCoilQuantity: number;
 }
 
 export interface SlittingEntry {

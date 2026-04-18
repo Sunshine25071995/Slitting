@@ -241,38 +241,40 @@ export default function App() {
           </div>
         ) : (
           <div className="flex flex-col h-screen overflow-hidden">
-            <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center justify-between z-50 border-b border-slate-100 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#5B50D6] rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100">
-                  <div className="relative">
-                    <div className="w-6 h-6 border-2 border-white/40 rounded-lg" />
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-sm rotate-45" />
+            <header className="shrink-0 p-4 lg:p-6 bg-[#F3F4F6] z-50">
+              <div className="bg-white px-6 h-16 sm:h-20 rounded-[1.5rem] sm:rounded-[2.5rem] flex items-center justify-between shadow-xl shadow-slate-200/50 border border-white">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#5B50D6] rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100">
+                    <div className="relative">
+                      <div className="w-6 h-6 sm:w-7 sm:h-7 border-2 border-white/40 rounded-lg" />
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 sm:w-4 sm:h-4 bg-white rounded-sm rotate-45" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col">
+                    <h1 className="text-lg sm:text-2xl font-black tracking-tight text-slate-800 leading-none">Sunshine</h1>
+                    <div className="flex items-center gap-1.5 mt-1 sm:mt-1.5">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                      <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">Live System</span>
+                    </div>
                   </div>
                 </div>
-                <div className="flex flex-col">
-                  <h1 className="text-xl font-black tracking-tight text-slate-800 leading-none">Sunshine</h1>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-                    <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400">Live System</span>
-                  </div>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-50 border border-slate-100 rounded-xl sm:rounded-2xl flex items-center justify-center text-slate-400 hover:text-[#5B50D6] hover:bg-white hover:shadow-md transition-all active:scale-95"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+                  </button>
+                  <button 
+                    onClick={logout}
+                    className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-50 border border-slate-100 rounded-xl sm:rounded-2xl flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-white hover:shadow-md transition-all active:scale-95"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                  </button>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => window.location.reload()}
-                  className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:text-[#5B50D6] hover:bg-white hover:shadow-md transition-all"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-                </button>
-                <button 
-                  onClick={logout}
-                  className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-white hover:shadow-md transition-all"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                </button>
               </div>
             </header>
-            <main className="flex-grow overflow-hidden bg-slate-50">
+            <main className="flex-grow overflow-hidden bg-[#F3F4F6]">
               {profile?.role === 'admin' ? <AdminDashboard /> : <UserDashboard />}
             </main>
           </div>

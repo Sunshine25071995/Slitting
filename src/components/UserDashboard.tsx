@@ -12,6 +12,7 @@ import { calculateNetWeight, calculateMeter } from '../lib/calculations';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import html2canvas from 'html2canvas';
+import { syncToGoogleSheets } from '../services/api';
 
 export default function UserDashboard() {
   const { user } = useAuth();
@@ -213,6 +214,14 @@ export default function UserDashboard() {
             ...item,
             timestamp: serverTimestamp(),
           });
+
+          // Live Sync to Google Sheets
+          if (item.grossWeight > 0) {
+            syncToGoogleSheets({ 
+              ...item, 
+              jobNumber: job?.jobNumber || 'Unknown' 
+            }, 'PRODUCTION_ENTRY').catch(() => {});
+          }
         } catch (err) {
           console.error('Auto-save failed:', err);
         } finally {
@@ -249,6 +258,22 @@ export default function UserDashboard() {
         }
       }
       toast.success('Entries saved successfully');
+      
+      // Sync to Google Sheets
+      const job = jobCards.find(j => j.id === jobId);
+      for (const entry of jobEntries) {
+        if (entry.grossWeight > 0) {
+          try {
+            await syncToGoogleSheets({ 
+              ...entry, 
+              jobNumber: job?.jobNumber || 'Unknown' 
+            }, 'PRODUCTION_ENTRY');
+          } catch (e) {
+            console.warn('Sync to Google Sheets failed for entry:', entry.id);
+          }
+        }
+      }
+      toast.success('Synced to Google Sheets');
       fetchEntries(jobId); // Refresh to get IDs
     } catch (error) {
       toast.error('Failed to save entries');
@@ -258,44 +283,71 @@ export default function UserDashboard() {
 
   const shareViaWhatsApp = async (jobId: string) => {
     const element = cardRefs.current[jobId];
-    if (!element) return;
+    if (!element) {
+      toast.error('Could not find data to share');
+      return;
+    }
 
     try {
+      toast.loading('Preparing image for sharing...', { id: 'share' });
       const canvas = await html2canvas(element, { 
-        scale: 2,
+        scale: 3, // Higher scale for better clarity
+        useCORS: true,
+        backgroundColor: '#F3F4F6',
         onclone: (clonedDoc) => {
           const noPrint = clonedDoc.querySelectorAll('.no-print');
           noPrint.forEach(el => (el as HTMLElement).style.display = 'none');
+          
+          // Ensure the cloned version is visible for capture
+          const target = clonedDoc.querySelector(`[data-job-id="${jobId}"]`);
+          if (target) {
+            (target as HTMLElement).style.height = 'auto';
+            (target as HTMLElement).style.overflow = 'visible';
+          }
         }
       });
+      
       canvas.toBlob(async (blob) => {
-        if (!blob) return;
+        if (!blob) {
+          toast.dismiss('share');
+          return;
+        }
         
-        const file = new File([blob], `JobCard_${jobId}.png`, { type: 'image/png' });
+        const fileName = `JobCard_${jobId}_${format(new Date(), 'ddMMMyy_HHmm')}.png`;
+        const file = new File([blob], fileName, { type: 'image/png' });
         
-        if (navigator.share) {
+        toast.dismiss('share');
+        
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
           try {
             await navigator.share({
               files: [file],
-              title: 'Job Card Data',
+              title: 'Sunshine Production Data',
               text: `Slitting data for Job: ${jobCards.find(j => j.id === jobId)?.jobNumber}`,
             });
+            toast.success('Shared successfully');
           } catch (err) {
             console.error('Share failed:', err);
-            toast.error('Sharing failed. Try downloading the image instead.');
+            // Fallback to download on error
+            const link = document.createElement('a');
+            link.download = fileName;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            toast.warning('Share failed. Image downloaded instead.');
           }
         } else {
           // Fallback: Download image
           const link = document.createElement('a');
-          link.download = `JobCard_${jobId}.png`;
-          link.href = canvas.toDataURL();
+          link.download = fileName;
+          link.href = canvas.toDataURL('image/png');
           link.click();
-          toast.info('Sharing not supported on this browser. Image downloaded instead.');
+          toast.success('Image downloaded for sharing');
         }
-      });
+      }, 'image/png', 0.9);
     } catch (error) {
+      toast.dismiss('share');
       console.error('Canvas error:', error);
-      toast.error('Failed to generate image');
+      toast.error('Failed to generate sharing image');
     }
   };
 
@@ -383,53 +435,75 @@ export default function UserDashboard() {
               <p className="text-sm font-bold">No active jobs assigned</p>
             </div>
           ) : (
-            filteredJobCards.map((job) => (
-              <div 
-                key={job.id} 
-                onClick={() => toggleJob(job.id!)}
-                className={`group p-5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
-                  expandedJob === job.id 
-                    ? 'bg-[#111827] border-[#111827] text-white shadow-xl' 
-                    : 'bg-white border-slate-100 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex justify-between items-start mb-3">
-                  <span className={`text-xl font-black tracking-tighter ${expandedJob === job.id ? 'text-white' : 'text-slate-900'}`}>
-                    #{job.jobNumber}
-                  </span>
-                  <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
-                    job.status === 'completed' ? 'bg-emerald-500 text-white' :
-                    job.status === 'in-progress' ? 'bg-[#5B50D6] text-white' : 'bg-slate-200 text-slate-500'
-                  }`}>
-                    {job.status}
+            filteredJobCards.map((job) => {
+              const statusColors = {
+                'pending': { border: 'border-l-[#94A3B8]', badge: 'bg-[#94A3B8] text-white', shadow: 'shadow-slate-100' },
+                'in-progress': { border: 'border-l-[#EAB308]', badge: 'bg-[#EAB308] text-white', shadow: 'shadow-yellow-100/50' },
+                'completed': { border: 'border-l-[#10B981]', badge: 'bg-[#10B981] text-white', shadow: 'shadow-emerald-100/50' }
+              };
+              const colors = statusColors[job.status] || statusColors.pending;
+              
+              return (
+                <div 
+                  key={job.id} 
+                  onClick={() => toggleJob(job.id!)}
+                  className={`
+                    group p-6 rounded-[2rem] border-2 border-slate-100 bg-white border-l-[6px] ${colors.border} ${colors.shadow}
+                    transition-all cursor-pointer relative overflow-hidden shadow-xl hover:scale-[1.02] active:scale-[0.98]
+                    ${expandedJob === job.id ? 'ring-2 ring-indigo-500/20' : ''}
+                  `}
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-3xl font-black tracking-tighter text-slate-900 leading-none">
+                        #{job.jobNumber}
+                      </span>
+                      <span className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-black text-slate-400">
+                        {format(new Date(job.date), 'dd/MM/yyyy')}
+                      </span>
+                    </div>
+                    <div className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${colors.badge}`}>
+                      {job.status}
+                    </div>
                   </div>
-                </div>
 
-                <div className="mb-4">
-                  <p className={`font-bold text-xs uppercase tracking-tight truncate ${expandedJob === job.id ? 'text-slate-400' : 'text-slate-600'}`}>
-                    {job.customerName || 'Standard Production'}
-                  </p>
-                  <p className={`text-[10px] font-medium mt-1 ${expandedJob === job.id ? 'text-slate-500' : 'text-slate-400'}`}>
-                    {format(new Date(job.date), 'MMM do, yyyy')}
-                  </p>
-                </div>
+                  <div className="mb-6">
+                    <h4 className="font-black text-base text-slate-700 uppercase leading-tight">
+                      {job.customerName || '000'}
+                    </h4>
+                  </div>
 
-                <div className="grid grid-cols-3 gap-2 py-3 border-t border-slate-50/10">
-                  <div className="flex flex-col">
-                    <span className="text-[7px] font-black text-slate-500 uppercase">Micron</span>
-                    <span className={`text-xs font-mono font-bold ${expandedJob === job.id ? 'text-white' : 'text-slate-800'}`}>{job.micron}</span>
+                  <div className="grid grid-cols-3 gap-3 mb-5">
+                    {[
+                      { label: 'Micron', value: job.micron },
+                      { label: 'Length', value: `${job.totalLength || 0} m` },
+                      { label: 'Target', value: `${job.totalQuantity || 0} kg` }
+                    ].map((stat, i) => (
+                      <div key={i} className="bg-slate-50/80 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</span>
+                        <span className="text-sm font-black text-slate-800">{stat.value}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-[7px] font-black text-slate-500 uppercase">Target</span>
-                    <span className={`text-xs font-mono font-bold ${expandedJob === job.id ? 'text-white' : 'text-slate-800'}`}>{job.eachCoilQuantity}</span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[7px] font-black text-slate-500 uppercase">Rolls</span>
-                    <span className={`text-xs font-mono font-bold ${expandedJob === job.id ? 'text-white' : 'text-slate-800'}`}>{job.eachCoilRolls}</span>
+
+                  <div className="space-y-2 pt-4 border-t border-slate-50">
+                    {(job.coilPlan || job.sizes.map(s => ({ size: s, rolls: job.eachCoilRolls }))).map((plan, idx) => {
+                      // Note: we'd need to fetch actual entries to show real progress here, 
+                      // but for the UI placeholders from the screenshot:
+                      return (
+                        <div key={idx} className="flex items-center justify-between px-2 bg-slate-50/30 py-2 rounded-xl">
+                          <span className="text-xs font-black text-slate-600 font-mono tracking-tighter">{plan.size}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-bold text-[#5B50D6] font-mono">{(plan.rolls * (job.totalLength || 0) / (job.coilPlan?.length || 1)).toFixed(0)} m</span>
+                            <span className="text-[10px] font-black text-emerald-500 font-mono">{(job.totalQuantity || 0).toFixed(1)} kg</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </section>
@@ -440,7 +514,11 @@ export default function UserDashboard() {
         flex-grow flex-col h-full bg-[#F3F4F6] relative z-10
       `}>
         {expandedJob && currentJob ? (
-          <div className="flex flex-col h-full overflow-hidden">
+          <div 
+            className="flex flex-col h-full overflow-hidden" 
+            ref={el => cardRefs.current[expandedJob!] = el}
+            data-job-id={expandedJob}
+          >
             {/* Header / Info Section (Fixed Container) */}
             <div className="flex flex-col h-full overflow-hidden">
               

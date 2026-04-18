@@ -6,16 +6,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Plus, Search, Download, Edit2, Trash2, Loader2, Calendar as CalendarIcon, CheckCircle2, Scale, Factory } from 'lucide-react';
+import { Plus, Search, Download, Edit2, Trash2, Loader2, Calendar as CalendarIcon, CheckCircle2, Scale, Factory, RefreshCw } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
+import { syncToGoogleSheets } from '../services/api';
 
 export default function AdminDashboard() {
   const [jobCards, setJobCards] = useState<JobCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobCard | null>(null);
@@ -24,11 +26,11 @@ export default function AdminDashboard() {
   const [formData, setFormData] = useState({
     jobNumber: '',
     date: format(new Date(), 'yyyy-MM-dd'),
-    sizes: '',
+    customerName: '',
     micron: '',
-    oneRollMeter: '',
-    eachCoilQuantity: '',
-    eachCoilRolls: '',
+    totalQuantity: '',
+    totalLength: '',
+    coilPlan: [{ size: '', rolls: '' }],
     status: 'pending' as 'pending' | 'in-progress' | 'completed',
   });
 
@@ -46,35 +48,57 @@ export default function AdminDashboard() {
   }, []);
 
   const filteredJobs = jobCards.filter(job => 
-    job.jobNumber.toLowerCase().includes(searchTerm.toLowerCase())
+    job.jobNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (job.customerName && job.customerName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const sizesArray = formData.sizes.split('+').map(s => parseFloat(s.trim())).filter(s => !isNaN(s));
+      const validCoilPlan = formData.coilPlan
+        .map(p => ({ size: parseFloat(p.size as string), rolls: parseInt(p.rolls as string) }))
+        .filter(p => !isNaN(p.size) && !isNaN(p.rolls));
+      
+      const sizesArray = validCoilPlan.map(p => p.size);
       
       const jobData = {
         jobNumber: formData.jobNumber,
         date: formData.date,
-        sizes: sizesArray,
-        micron: parseFloat(formData.micron),
-        oneRollMeter: parseFloat(formData.oneRollMeter),
-        eachCoilQuantity: parseFloat(formData.eachCoilQuantity),
-        eachCoilRolls: parseFloat(formData.eachCoilRolls),
+        customerName: formData.customerName,
+        micron: parseFloat(formData.micron) || 0,
+        totalQuantity: parseFloat(formData.totalQuantity) || 0,
+        totalLength: parseFloat(formData.totalLength) || 0,
+        coilPlan: validCoilPlan,
         status: formData.status,
         updatedAt: serverTimestamp(),
+        // Compatibility fields
+        sizes: sizesArray,
+        eachCoilRolls: validCoilPlan[0]?.rolls || 0,
+        oneRollMeter: (parseFloat(formData.totalLength) || 0) / (validCoilPlan[0]?.rolls || 1),
+        eachCoilQuantity: parseFloat(formData.totalQuantity) || 0,
       };
 
       if (editingJob) {
         await updateDoc(doc(db, 'jobCards', editingJob.id!), jobData);
         toast.success('Job card updated successfully');
+        try {
+          await syncToGoogleSheets(jobData, 'JOB_SUMMARY');
+          toast.success('Synced to Google Sheets');
+        } catch (e) {
+          console.warn('Google Sheets sync failed, but data saved to Firestore');
+        }
       } else {
         await addDoc(collection(db, 'jobCards'), {
           ...jobData,
           createdAt: serverTimestamp(),
         });
         toast.success('Job card created successfully');
+        try {
+          await syncToGoogleSheets(jobData, 'JOB_SUMMARY');
+          toast.success('Synced to Google Sheets');
+        } catch (e) {
+          console.warn('Google Sheets sync failed, but data saved to Firestore');
+        }
       }
 
       setIsDialogOpen(false);
@@ -82,11 +106,11 @@ export default function AdminDashboard() {
       setFormData({
         jobNumber: '',
         date: format(new Date(), 'yyyy-MM-dd'),
-        sizes: '',
+        customerName: '',
         micron: '',
-        oneRollMeter: '',
-        eachCoilQuantity: '',
-        eachCoilRolls: '',
+        totalQuantity: '',
+        totalLength: '',
+        coilPlan: [{ size: '', rolls: '' }],
         status: 'pending',
       });
     } catch (error) {
@@ -95,16 +119,36 @@ export default function AdminDashboard() {
     }
   };
 
+  const addCoil = () => {
+    setFormData({
+      ...formData,
+      coilPlan: [...formData.coilPlan, { size: '', rolls: '' }]
+    });
+  };
+
+  const removeCoil = (index: number) => {
+    if (formData.coilPlan.length <= 1) return;
+    const newPlan = [...formData.coilPlan];
+    newPlan.splice(index, 1);
+    setFormData({ ...formData, coilPlan: newPlan });
+  };
+
+  const updateCoil = (index: number, field: 'size' | 'rolls', value: string) => {
+    const newPlan = [...formData.coilPlan];
+    newPlan[index] = { ...newPlan[index], [field]: value };
+    setFormData({ ...formData, coilPlan: newPlan });
+  };
+
   const handleEdit = (job: JobCard) => {
     setEditingJob(job);
     setFormData({
       jobNumber: job.jobNumber,
       date: job.date,
-      sizes: job.sizes.join(' + '),
-      micron: job.micron.toString(),
-      oneRollMeter: job.oneRollMeter.toString(),
-      eachCoilQuantity: job.eachCoilQuantity.toString(),
-      eachCoilRolls: job.eachCoilRolls.toString(),
+      customerName: job.customerName || '',
+      micron: job.micron?.toString() || '',
+      totalQuantity: job.totalQuantity?.toString() || '',
+      totalLength: job.totalLength?.toString() || '',
+      coilPlan: job.coilPlan?.map(p => ({ size: p.size.toString(), rolls: p.rolls.toString() })) || [{ size: '', rolls: '' }],
       status: job.status,
     });
     setIsDialogOpen(true);
@@ -157,149 +201,154 @@ export default function AdminDashboard() {
               setFormData({
                 jobNumber: '',
                 date: format(new Date(), 'yyyy-MM-dd'),
-                sizes: '',
+                customerName: '',
                 micron: '',
-                oneRollMeter: '',
-                eachCoilQuantity: '',
-                eachCoilRolls: '',
+                totalQuantity: '',
+                totalLength: '',
+                coilPlan: [{ size: '', rolls: '' }],
+                status: 'pending',
               });
             }
           }}>
-            <DialogTrigger render={<Button className="h-10 font-bold shadow-lg shadow-primary/20" />}>
-              <Plus className="mr-2 h-4 w-4" />
-              New Job Card
+            <DialogTrigger render={<Button className="h-10 font-bold shadow-lg shadow-primary/20 bg-[#111827] hover:bg-[#111827]/90 text-white" />}>
+                <Plus className="mr-2 h-4 w-4" />
+                New Job Card
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px] rounded-2xl">
-              <DialogHeader>
-                <DialogTitle className="text-xl font-bold">{editingJob ? 'Edit Job Card' : 'Create New Job Card'}</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSave} className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="jobNumber" className="text-[10px] font-bold uppercase text-slate-500">Job Number</Label>
+            <DialogContent className="sm:max-w-[500px] p-0 overflow-hidden border-0 rounded-[2rem] shadow-2xl">
+              <div className="bg-[#111827] p-6 flex items-center gap-3">
+                 <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center">
+                   <Factory className="h-6 w-6 text-white" />
+                 </div>
+                 <h2 className="text-xl font-black text-white tracking-tight uppercase">Create Slitting Job Card</h2>
+              </div>
+              
+              <form onSubmit={handleSave} className="p-8 space-y-6 bg-white overflow-y-auto max-h-[80vh]">
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Date</Label>
                     <Input 
-                      id="jobNumber" 
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
-                      value={formData.jobNumber} 
-                      onChange={e => setFormData({...formData, jobNumber: e.target.value})}
-                      required 
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="date" className="text-[10px] font-bold uppercase text-slate-500">Date</Label>
-                    <Input 
-                      id="date" 
                       type="date" 
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
+                      className="h-14 rounded-2xl border-slate-100 bg-slate-50/50 font-bold focus:ring-4 focus:ring-[#111827]/5 transition-all"
                       value={formData.date} 
                       onChange={e => setFormData({...formData, date: e.target.value})}
                       required 
                     />
                   </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="sizes" className="text-[10px] font-bold uppercase text-slate-500">Sizes (e.g. 250 + 300 + 150)</Label>
-                  <Input 
-                    id="sizes" 
-                    className="h-11 rounded-xl border-slate-200 font-mono font-bold"
-                    value={formData.sizes} 
-                    onChange={e => setFormData({...formData, sizes: e.target.value})}
-                    placeholder="250 + 300"
-                    required 
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="micron" className="text-[10px] font-bold uppercase text-slate-500">Micron</Label>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Job No</Label>
                     <Input 
-                      id="micron" 
-                      type="number" 
+                      placeholder="e.g. 1005"
+                      className="h-14 rounded-2xl border-slate-100 bg-slate-50/50 font-bold focus:ring-4 focus:ring-[#111827]/5 transition-all placeholder:text-slate-300"
+                      value={formData.jobNumber} 
+                      onChange={e => setFormData({...formData, jobNumber: e.target.value})}
+                      required 
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Select Party</Label>
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-300" />
+                    <Input 
+                      placeholder="Search..." 
+                      className="h-14 pl-12 rounded-2xl border-slate-100 bg-slate-50/50 font-bold focus:ring-4 focus:ring-[#111827]/5 transition-all placeholder:text-slate-300"
+                      value={formData.customerName} 
+                      onChange={e => setFormData({...formData, customerName: e.target.value})}
+                      required 
+                    />
+                  </div>
+                </div>
+
+                <div className="p-6 rounded-3xl border-2 border-slate-50 bg-slate-50/20 space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-500">Coil Plan</h3>
+                    <Button 
+                      type="button" 
+                      onClick={addCoil}
+                      variant="ghost" 
+                      className="h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-widest text-[#5B50D6] bg-indigo-50 hover:bg-indigo-100"
+                    >
+                      + Add Coil
+                    </Button>
+                  </div>
+                  
+                  {formData.coilPlan.map((coil, idx) => (
+                    <div key={idx} className="grid grid-cols-[1fr,1fr,40px] gap-3 items-end">
+                      <div className="space-y-1.5">
+                        <Label className="text-[8px] font-black uppercase tracking-widest text-slate-300">Size</Label>
+                        <Input 
+                          placeholder="e.g. 100mm"
+                          className="h-12 rounded-xl border-slate-100 bg-white font-bold"
+                          value={coil.size}
+                          onChange={e => updateCoil(idx, 'size', e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[8px] font-black uppercase tracking-widest text-slate-300">Rolls</Label>
+                        <Input 
+                          placeholder="0"
+                          className="h-12 rounded-xl border-slate-100 bg-white font-bold text-center"
+                          value={coil.rolls}
+                          onChange={e => updateCoil(idx, 'rolls', e.target.value)}
+                        />
+                      </div>
+                      {formData.coilPlan.length > 1 && (
+                        <Button 
+                          type="button" 
+                          onClick={() => removeCoil(idx)}
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-12 w-10 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Micron</Label>
+                    <Input 
+                      type="number"
                       step="0.01"
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
+                      className="h-14 rounded-2xl border-slate-100 bg-slate-50/50 font-bold text-center"
                       value={formData.micron} 
                       onChange={e => setFormData({...formData, micron: e.target.value})}
                       required 
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="oneRollMeter" className="text-[10px] font-bold uppercase text-slate-500">1 Roll Meter</Label>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qty (KG)</Label>
                     <Input 
-                      id="oneRollMeter" 
-                      type="number" 
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
-                      value={formData.oneRollMeter} 
-                      onChange={e => setFormData({...formData, oneRollMeter: e.target.value})}
+                      type="number"
+                      className="h-14 rounded-2xl border-slate-100 bg-slate-50/50 font-bold text-center"
+                      value={formData.totalQuantity} 
+                      onChange={e => setFormData({...formData, totalQuantity: e.target.value})}
+                      required 
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Length (M)</Label>
+                    <Input 
+                      type="number"
+                      className="h-14 rounded-2xl border-slate-100 bg-slate-50/50 font-bold text-center"
+                      value={formData.totalLength} 
+                      onChange={e => setFormData({...formData, totalLength: e.target.value})}
                       required 
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="eachCoilQuantity" className="text-[10px] font-bold uppercase text-slate-500">Each Coil Quantity</Label>
-                    <Input 
-                      id="eachCoilQuantity" 
-                      type="number" 
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
-                      value={formData.eachCoilQuantity} 
-                      onChange={e => setFormData({...formData, eachCoilQuantity: e.target.value})}
-                      required 
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="eachCoilRolls" className="text-[10px] font-bold uppercase text-slate-500">Each Coil Rolls</Label>
-                    <Input 
-                      id="eachCoilRolls" 
-                      type="number" 
-                      className="h-11 rounded-xl border-slate-200 font-mono font-bold"
-                      value={formData.eachCoilRolls} 
-                      onChange={e => setFormData({...formData, eachCoilRolls: e.target.value})}
-                      required 
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-[10px] font-bold uppercase text-slate-500">Status</Label>
-                  <div className="flex gap-2">
-                    {['pending', 'in-progress', 'completed'].map((status) => (
-                      <Button
-                        key={status}
-                        type="button"
-                        variant={formData.status === status ? 'default' : 'outline'}
-                        size="sm"
-                        className="h-9 text-[10px] font-bold uppercase px-4 rounded-xl flex-grow"
-                        onClick={() => setFormData({...formData, status: status as any})}
-                      >
-                        {status}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <Button type="submit" className="w-full h-12 rounded-xl font-bold text-lg mt-2">
+
+                <Button type="submit" className="w-full h-16 bg-[#111827] hover:bg-[#111827]/90 text-white rounded-2xl font-black text-lg tracking-tight uppercase shadow-xl shadow-slate-200 mt-4 active:scale-[0.98] transition-all">
                   {editingJob ? 'Update Job Card' : 'Create Job Card'}
                 </Button>
               </form>
             </DialogContent>
           </Dialog>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0 px-1">
-        {[
-          { label: 'Total Jobs', value: jobCards.length, icon: Factory, color: 'text-[#5B50D6]', bg: 'bg-[#5B50D6]/5' },
-          { label: 'Pending', value: jobCards.filter(j => j.status === 'pending').length, icon: Loader2, color: 'text-amber-500', bg: 'bg-amber-50' },
-          { label: 'Completed', value: jobCards.filter(j => j.status === 'completed').length, icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-50' },
-          { label: 'Avg Micron', value: jobCards.length ? (jobCards.reduce((acc, curr) => acc + curr.micron, 0) / jobCards.length).toFixed(1) : '0.0', icon: Scale, color: 'text-blue-500', bg: 'bg-blue-50' }
-        ].map((stat, i) => (
-          <div key={i} className={`p-3 sm:p-4 rounded-2xl border border-slate-200 bg-white flex items-center gap-3 sm:gap-4 shadow-sm`}>
-            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl ${stat.bg} flex items-center justify-center shrink-0`}>
-              <stat.icon className={`h-5 w-5 sm:h-6 sm:w-6 ${stat.color}`} />
-            </div>
-            <div>
-              <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500">{stat.label}</p>
-              <p className="text-xl sm:text-2xl font-bold text-slate-900">{stat.value}</p>
-            </div>
-          </div>
-        ))}
       </div>
 
       <section className="bg-white rounded-xl border border-slate-200 flex flex-col flex-grow overflow-hidden">
@@ -326,11 +375,11 @@ export default function AdminDashboard() {
               <table className="w-full border-collapse">
               <thead className="sticky top-0 bg-white z-10">
                 <tr>
-                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-bold uppercase text-slate-400">Job No.</th>
-                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-bold uppercase text-slate-400">Date</th>
-                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-bold uppercase text-slate-400">Sizes (mm)</th>
-                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-bold uppercase text-slate-400">Micron</th>
-                  <th className="text-right py-3 px-4 border-b-2 border-slate-100 text-[10px] font-bold uppercase text-slate-400">Actions</th>
+                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-black uppercase text-slate-400">Job No.</th>
+                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-black uppercase text-slate-400">Customer</th>
+                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-black uppercase text-slate-400">Sizes (mm)</th>
+                  <th className="text-left py-3 px-4 border-b-2 border-slate-100 text-[10px] font-black uppercase text-slate-400">Micron</th>
+                  <th className="text-right py-3 px-4 border-b-2 border-slate-100 text-[10px] font-black uppercase text-slate-400">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -343,13 +392,20 @@ export default function AdminDashboard() {
                 ) : (
                   filteredJobs.map((job) => (
                     <tr key={job.id} className="group hover:bg-slate-50/50 transition-colors">
-                      <td className="py-3 px-4 border-b border-slate-100 font-mono font-bold text-primary">#{job.jobNumber}</td>
-                      <td className="py-3 px-4 border-b border-slate-100 text-sm text-slate-600">{format(new Date(job.date), 'dd MMM yyyy')}</td>
+                      <td className="py-3 px-4 border-b border-slate-100">
+                        <div className="flex flex-col">
+                          <span className="font-mono font-black text-[#5B50D6]">#{job.jobNumber}</span>
+                          <span className="text-[8px] text-slate-400 font-bold uppercase">{format(new Date(job.date), 'dd MMM yyyy')}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 border-b border-slate-100">
+                        <span className="text-xs font-black text-slate-700 uppercase">{job.customerName || 'N/A'}</span>
+                      </td>
                       <td className="py-3 px-4 border-b border-slate-100">
                         <div className="flex gap-1 flex-wrap">
-                          {job.sizes.map((s, i) => (
-                            <span key={i} className="bg-slate-100 text-slate-600 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                              {s}
+                          {(job.coilPlan || job.sizes.map(s => ({ size: s, rolls: job.eachCoilRolls }))).map((p, i) => (
+                            <span key={i} className="bg-indigo-50 text-[#5B50D6] text-[9px] font-black px-2 py-0.5 rounded-lg border border-indigo-100/50">
+                              {p.size}mm × {p.rolls}
                             </span>
                           ))}
                         </div>
@@ -357,6 +413,25 @@ export default function AdminDashboard() {
                       <td className="py-3 px-4 border-b border-slate-100 font-mono font-bold text-slate-700">{job.micron}μ</td>
                       <td className="py-3 px-4 border-b border-slate-100 text-right">
                         <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            disabled={syncing === job.id}
+                            onClick={async () => {
+                              setSyncing(job.id!);
+                              try {
+                                await syncToGoogleSheets(job, 'JOB_SUMMARY');
+                                toast.success('Manually synced to Sheets');
+                              } catch (e: any) {
+                                toast.error(e.message || 'Sync failed');
+                              } finally {
+                                setSyncing(null);
+                              }
+                            }} 
+                            className="h-8 w-8 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50"
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 ${syncing === job.id ? 'animate-spin text-emerald-500' : ''}`} />
+                          </Button>
                           <Button variant="ghost" size="icon" onClick={() => handleEdit(job)} className="h-8 w-8 text-slate-400 hover:text-primary hover:bg-primary/5">
                             <Edit2 className="h-3.5 w-3.5" />
                           </Button>
