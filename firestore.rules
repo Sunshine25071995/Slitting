@@ -72,7 +72,8 @@ service cloud.firestore {
 
     match /jobCards/{jobId} {
       allow read: if isAuthenticated();
-      allow create, delete: if isAdmin() && isValidJobCard(request.resource.data);
+      allow create: if isAdmin() && isValidJobCard(request.resource.data);
+      allow delete: if isAdmin();
       allow update: if (isAdmin() && isValidJobCard(request.resource.data)) || 
                      (isAuthenticated() && isValidStatusUpdate());
 

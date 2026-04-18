@@ -243,36 +243,29 @@ export default function UserDashboard() {
 
   const saveEntries = async (jobId: string) => {
     try {
-      const jobEntries = entries[jobId] || [];
-      for (const entry of jobEntries) {
-        if (entry.id) {
-          await updateDoc(doc(db, 'jobCards', jobId, 'entries', entry.id), {
-            ...entry,
-            timestamp: serverTimestamp(),
-          });
-        } else {
-          await addDoc(collection(db, 'jobCards', jobId, 'entries'), {
-            ...entry,
-            timestamp: serverTimestamp(),
-          });
-        }
-      }
+      const jobEntries = (entries[jobId] || []).filter(e => e.grossWeight > 0);
+      
+      const savePromises = jobEntries.map(entry => {
+        const docRef = doc(db, 'jobCards', jobId, 'entries', entry.id!);
+        return setDoc(docRef, {
+          ...entry,
+          timestamp: serverTimestamp(),
+        }, { merge: true });
+      });
+
+      await Promise.all(savePromises);
       toast.success('Entries saved successfully');
       
-      // Sync to Google Sheets
+      // Sync to Google Sheets (Parallel)
       const job = jobCards.find(j => j.id === jobId);
-      for (const entry of jobEntries) {
-        if (entry.grossWeight > 0) {
-          try {
-            await syncToGoogleSheets({ 
-              ...entry, 
-              jobNumber: job?.jobNumber || 'Unknown' 
-            }, 'PRODUCTION_ENTRY');
-          } catch (e) {
-            console.warn('Sync to Google Sheets failed for entry:', entry.id);
-          }
-        }
-      }
+      const syncPromises = jobEntries.map(entry => {
+        return syncToGoogleSheets({ 
+          ...entry, 
+          jobNumber: job?.jobNumber || 'Unknown' 
+        }, 'PRODUCTION_ENTRY').catch(err => console.warn('Sync failed for entry', entry.id, err));
+      });
+      
+      await Promise.all(syncPromises);
       toast.success('Synced to Google Sheets');
       fetchEntries(jobId); // Refresh to get IDs
     } catch (error) {

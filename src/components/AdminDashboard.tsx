@@ -160,6 +160,7 @@ export default function AdminDashboard() {
         await deleteDoc(doc(db, 'jobCards', id));
         toast.success('Job card deleted');
       } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `jobCards/${id}`);
         toast.error('Failed to delete job card');
       }
     }
@@ -412,7 +413,7 @@ export default function AdminDashboard() {
                       </td>
                       <td className="py-3 px-4 border-b border-slate-100 font-mono font-bold text-slate-700">{job.micron}μ</td>
                       <td className="py-3 px-4 border-b border-slate-100 text-right">
-                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex justify-end gap-1 opacity-100 transition-opacity">
                           <Button 
                             variant="ghost" 
                             size="icon" 
