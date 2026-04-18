@@ -28,8 +28,30 @@ async function startServer() {
     const {
       GOOGLE_SERVICE_ACCOUNT_EMAIL,
       GOOGLE_PRIVATE_KEY,
-      GOOGLE_SHEET_ID
+      GOOGLE_SHEET_ID,
+      GOOGLE_APPS_SCRIPT_URL
     } = process.env;
+
+    // --- APPS SCRIPT PATH START ---
+    if (GOOGLE_APPS_SCRIPT_URL) {
+      try {
+        console.log(`Syncing via Apps Script: ${GOOGLE_APPS_SCRIPT_URL}`);
+        const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data, type })
+        });
+        const result = await response.json();
+        if (result.success !== true && result.result !== 'success') {
+          throw new Error(result.error || 'Apps Script sync failed');
+        }
+        return res.json({ success: true, message: `Synchronized ${type} via Apps Script` });
+      } catch (error: any) {
+        console.error("Apps Script Sync Error:", error.message);
+        return res.status(500).json({ error: `Apps Script Sync Failed: ${error.message}` });
+      }
+    }
+    // --- APPS SCRIPT PATH END ---
 
     if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_SHEET_ID) {
       console.error("Sync Error: Missing environment variables");
