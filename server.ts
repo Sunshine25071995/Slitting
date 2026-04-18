@@ -41,6 +41,15 @@ async function startServer() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ data, type })
         });
+        
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('text/html')) {
+          const text = await response.text();
+          if (text.includes('google-signin') || text.includes('Service Login')) {
+            throw new Error("Google Apps Script is requesting login. Please re-deploy the script and set 'Who has access' to 'Anyone'.");
+          }
+        }
+
         const result = await response.json();
         if (result.success !== true && result.result !== 'success') {
           throw new Error(result.error || 'Apps Script sync failed');
